@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: koim
+  datasource:
+    url: jdbc:postgresql://localhost:5432/koim
+    username: koim
+    password: koim
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc.time_zone: UTC
+    open-in-view: false
+
+koim:
+  jwt:
+    secret: change-me-please-change-me-please-change-me-please-32bytes
+    expire-minutes: 1440
+  ws:
+    path: /ws/chat
