@@ -1,5 +1,6 @@
 package org.example.websocket
 
+import org.example.metrics.ImMetrics
 import org.example.security.JwtService
 import org.springframework.stereotype.Component
 import org.springframework.web.socket.CloseStatus
@@ -11,6 +12,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler
 class ChatWebSocketHandler(
     private val onlineUserManager: OnlineUserManager,
     private val jwtService: JwtService,
+    private val metrics: ImMetrics,
 ) : TextWebSocketHandler() {
 
     override fun afterConnectionEstablished(session: WebSocketSession) {
@@ -21,10 +23,16 @@ class ChatWebSocketHandler(
         }
         session.attributes["uid"] = uid
         onlineUserManager.register(uid, session)
+        metrics.wsSessionsActive.incrementAndGet()
+        metrics.wsConnectTotal.increment()
     }
 
     override fun afterConnectionClosed(session: WebSocketSession, status: CloseStatus) {
-        (session.attributes["uid"] as? Long)?.let { onlineUserManager.unregister(it, session) }
+        (session.attributes["uid"] as? Long)?.let {
+            onlineUserManager.unregister(it, session)
+            metrics.wsSessionsActive.decrementAndGet()
+            metrics.wsDisconnectTotal.increment()
+        }
     }
 
     override fun handleTextMessage(session: WebSocketSession, message: TextMessage) {

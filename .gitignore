@@ -62,3 +62,7 @@ front_end/pnpm-debug.log*
 .env
 .env.local
 *.local
+
+### Redis local snapshots ###
+dump.rdb
+appendonly.aof

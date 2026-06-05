@@ -40,7 +40,7 @@ class SecurityConfig(
             .csrf { it.disable() }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests {
-                it.requestMatchers("/api/user/register", "/api/user/login", "/ws/**").permitAll()
+                it.requestMatchers("/api/user/register", "/api/user/login", "/ws/**", "/actuator/**").permitAll()
                     .anyRequest().authenticated()
             }
             .exceptionHandling {

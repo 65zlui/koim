@@ -2,6 +2,7 @@ package org.example.websocket
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import org.example.metrics.ImMetrics
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Bean
@@ -35,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap
 class RedisOnlineUserManager(
     private val redis: StringRedisTemplate,
     private val objectMapper: ObjectMapper,
+    private val metrics: ImMetrics,
 ) : OnlineUserManager, MessageListener {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -68,11 +70,13 @@ class RedisOnlineUserManager(
         if (!isOnline(uid)) return false
         val envelope = objectMapper.writeValueAsString(Envelope(uid, payload))
         redis.convertAndSend(FANOUT_CHANNEL, envelope)
+        metrics.fanoutPublishedTotal.increment()
         return true
     }
 
     /** Triggered by [RedisMessageListenerContainer] for messages on [FANOUT_CHANNEL]. */
     override fun onMessage(message: Message, pattern: ByteArray?) {
+        metrics.fanoutReceivedTotal.increment()
         val raw = String(message.body)
         val env = runCatching { objectMapper.readValue<Envelope>(raw) }.getOrNull() ?: return
         val sess = localSessions[env.uid] ?: return

@@ -1,0 +1,27 @@
+route:
+  receiver: default
+  group_by: ["alertname", "severity"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: default
+      repeat_interval: 30m
+
+receivers:
+  - name: default
+    # Replace this with your real channel (Slack, Feishu, email, PagerDuty...).
+    # The webhook below is a placeholder; Alertmanager will keep retrying so it's safe to leave unset.
+    webhook_configs:
+      - url: 'http://host.docker.internal:9999/alertmanager-webhook'
+        send_resolved: true
+
+inhibit_rules:
+  # If a critical alert fires on an instance, suppress matching warnings to avoid duplicate noise.
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal: ["alertname", "instance"]

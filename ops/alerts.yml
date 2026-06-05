@@ -1,0 +1,96 @@
+groups:
+  - name: koim-platform
+    rules:
+      - alert: KoimDown
+        expr: up{job="koim"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "koim instance is down ({{ $labels.instance }})"
+          description: "Prometheus has been unable to scrape /actuator/prometheus for >1m."
+
+      - alert: KoimHighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="koim",status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{job="koim"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "5xx error rate > 5% (koim)"
+          description: "{{ $value | humanizePercentage }} of HTTP requests are returning 5xx."
+
+      - alert: KoimHighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le, uri) (rate(http_server_requests_seconds_bucket{job="koim"}[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency > 1s on {{ $labels.uri }}"
+
+      - alert: KoimHikariNearExhausted
+        expr: hikaricp_connections_pending{job="koim"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HikariCP has pending connection requests"
+          description: "Threads are blocked waiting for a DB connection. Pool may be undersized or queries slow."
+
+      - alert: KoimJvmHeapHigh
+        expr: |
+          sum by (instance) (jvm_memory_used_bytes{job="koim",area="heap"})
+          /
+          sum by (instance) (jvm_memory_max_bytes{job="koim",area="heap"}) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "JVM heap usage > 85% on {{ $labels.instance }}"
+
+  - name: koim-business
+    rules:
+      - alert: KoimOfflineBacklogGrowing
+        expr: koim_offline_queue_size > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Offline message backlog > 1000 rows"
+          description: "Pending offline messages are accumulating; consumers may be lagging."
+
+      - alert: KoimWsSessionsCollapsed
+        # Only fire after the system has had time to accumulate sessions in normal hours.
+        expr: koim_ws_sessions_active{job="koim"} < 1
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "No active WebSocket sessions on {{ $labels.instance }} for 10m"
+
+      - alert: KoimSendFailureRate
+        expr: |
+          sum(rate(koim_message_sent_total{result="fail"}[5m]))
+          /
+          sum(rate(koim_message_sent_total[5m])) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Message send failure rate > 2%"
+
+      - alert: KoimMessageDeliveryP95Slow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(koim_message_delivery_seconds_bucket[5m]))
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Message delivery p95 > 500ms"

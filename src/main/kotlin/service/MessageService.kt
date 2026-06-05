@@ -1,6 +1,7 @@
 package org.example.service
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.micrometer.core.instrument.Timer
 import org.example.dto.MessageDto
 import org.example.dto.SendMessageRequest
 import org.example.dto.SendMessageResponse
@@ -8,6 +9,7 @@ import org.example.entity.Conversation
 import org.example.entity.ConversationId
 import org.example.entity.Message
 import org.example.entity.OfflineMessage
+import org.example.metrics.ImMetrics
 import org.example.repository.ConversationRepository
 import org.example.repository.GroupMemberRepository
 import org.example.repository.MessageRepository
@@ -25,6 +27,7 @@ class MessageService(
     private val groupMemberRepository: GroupMemberRepository,
     private val onlineUserManager: OnlineUserManager,
     private val objectMapper: ObjectMapper,
+    private val metrics: ImMetrics,
 ) {
 
     companion object {
@@ -33,6 +36,21 @@ class MessageService(
 
     @Transactional
     fun send(fromUid: Long, req: SendMessageRequest): SendMessageResponse {
+        val sample = Timer.start()
+        val peerType = if (req.toUid != null) "u" else "g"
+        var result = "success"
+        return try {
+            sendInternal(fromUid, req)
+        } catch (t: Throwable) {
+            result = "fail"
+            throw t
+        } finally {
+            metrics.messageSent(peerType, result).increment()
+            sample.stop(metrics.messageDelivery)
+        }
+    }
+
+    private fun sendInternal(fromUid: Long, req: SendMessageRequest): SendMessageResponse {
         require(req.toUid != null || req.groupId != null) { "toUid or groupId required" }
         require(req.toUid == null || req.groupId == null) { "exactly one of toUid/groupId" }
 
