@@ -1,31 +1,29 @@
 package org.example.websocket
 
-import org.springframework.stereotype.Component
-import org.springframework.web.socket.TextMessage
 import org.springframework.web.socket.WebSocketSession
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * In-memory online user registry. Single-instance only — for multi-instance use Redis pub/sub.
+ * Online presence + WebSocket message dispatch abstraction.
+ *
+ * Two implementations are provided:
+ *  - [InMemoryOnlineUserManager] (default): single-instance, ConcurrentHashMap-based.
+ *  - [RedisOnlineUserManager]: cross-node fanout via Redis pub/sub for multi-instance deployments.
+ *
+ * Switch via the `koim.online-manager` property (`memory` | `redis`).
  */
-@Component
-class OnlineUserManager {
-    private val sessions = ConcurrentHashMap<Long, WebSocketSession>()
+interface OnlineUserManager {
+    /** Register a freshly opened session for [uid]. Existing session for the same uid is replaced. */
+    fun register(uid: Long, session: WebSocketSession)
 
-    fun register(uid: Long, session: WebSocketSession) {
-        sessions[uid]?.let { runCatching { it.close() } }
-        sessions[uid] = session
-    }
+    /** Remove a session from the registry on close. */
+    fun unregister(uid: Long, session: WebSocketSession)
 
-    fun unregister(uid: Long, session: WebSocketSession) {
-        sessions.remove(uid, session)
-    }
+    /** True if the user has at least one open session anywhere in the cluster. */
+    fun isOnline(uid: Long): Boolean
 
-    fun isOnline(uid: Long): Boolean = sessions[uid]?.isOpen == true
-
-    fun send(uid: Long, payload: String): Boolean {
-        val s = sessions[uid] ?: return false
-        if (!s.isOpen) return false
-        return runCatching { s.sendMessage(TextMessage(payload)); true }.getOrDefault(false)
-    }
+    /**
+     * Try to deliver [payload] to the user via WebSocket.
+     * @return true iff the payload was handed to an open WebSocket on some node.
+     */
+    fun send(uid: Long, payload: String): Boolean
 }

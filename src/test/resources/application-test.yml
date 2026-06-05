@@ -18,3 +18,4 @@ koim:
     expire-minutes: 60
   ws:
     path: /ws/chat
+  online-manager: memory
