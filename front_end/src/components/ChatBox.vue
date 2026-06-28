@@ -1,8 +1,5 @@
 <template>
   <div class="chat-box">
-    <header class="chat-header">
-      <span>{{ title }}</span>
-    </header>
     <div ref="scrollEl" class="messages">
       <MessageBubble
         v-for="m in messages"
@@ -54,11 +51,6 @@ const scrollEl = ref(null)
 const inputEl = ref(null)
 const pickerEl = ref(null)
 const showEmoji = ref(false)
-
-const title = computed(() => {
-  const c = props.conversation
-  return c.peerName || (c.peerType === 'g' ? `Group #${c.peerId}` : `User #${c.peerId}`)
-})
 
 const canSend = computed(() => text.value.trim().length > 0)
 
@@ -133,12 +125,6 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat-box { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.chat-header {
-  padding: 14px 20px;
-  border-bottom: 1px solid #eef0f2;
-  font-weight: 600;
-  background: white;
-}
 .messages {
   flex: 1;
   overflow-y: auto;

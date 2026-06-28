@@ -88,3 +88,46 @@ data class GroupInfo(
     val ownerUid: Long,
     val memberCount: Int,
 )
+
+data class UpdateGroupRequest(
+    val groupId: Long,
+    @field:NotBlank @field:Size(max = 100) val name: String,
+)
+
+data class LeaveGroupRequest(val groupId: Long)
+
+data class KickMemberRequest(val groupId: Long, val targetUid: Long)
+
+data class GroupMemberInfo(
+    val uid: Long,
+    val nickname: String?,
+    val joinedAt: Instant,
+)
+
+data class UserProfile(
+    val uid: Long,
+    val username: String,
+    val nickname: String?,
+    val avatarUrl: String?,
+    val status: String?,
+    val createdAt: Instant,
+)
+
+data class UpdateProfileRequest(
+    @field:Size(max = 50) val nickname: String? = null,
+    val avatarUrl: String? = null,
+    @field:Size(max = 100) val status: String? = null,
+)
+
+data class ChangePasswordRequest(
+    @field:NotBlank val oldPassword: String,
+    @field:NotBlank @field:Size(min = 6, max = 64) val newPassword: String,
+)
+
+data class UserSearchResult(
+    val uid: Long,
+    val username: String,
+    val nickname: String?,
+    val avatarUrl: String?,
+    val status: String?,
+)

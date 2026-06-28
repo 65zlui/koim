@@ -23,6 +23,9 @@ class User(
     @Column(name = "avatar_url", columnDefinition = "TEXT")
     var avatarUrl: String? = null,
 
+    @Column(length = 100)
+    var status: String? = null,
+
     @Column(name = "created_at", nullable = false, updatable = false)
     var createdAt: Instant = Instant.now(),
 

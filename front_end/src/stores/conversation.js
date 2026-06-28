@@ -73,5 +73,20 @@ export const useConversationStore = defineStore('conversation', () => {
     if (item) item.unreadCount = 0
   }
 
-  return { list, active, reload, setActive, openLocal, upsertFromMessage, markActiveRead }
+  /** Remove a conversation locally (e.g. after leaving a group or being kicked). */
+  const removeLocal = (peerType, peerId) => {
+    const idx = list.value.findIndex(
+      (c) => c.peerType === peerType && c.peerId === peerId,
+    )
+    if (idx !== -1) list.value.splice(idx, 1)
+    if (
+      active.value &&
+      active.value.peerType === peerType &&
+      active.value.peerId === peerId
+    ) {
+      active.value = null
+    }
+  }
+
+  return { list, active, reload, setActive, openLocal, upsertFromMessage, markActiveRead, removeLocal }
 })

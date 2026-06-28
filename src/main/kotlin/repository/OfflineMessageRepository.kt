@@ -23,4 +23,15 @@ interface OfflineMessageRepository : JpaRepository<OfflineMessage, Long> {
         @Param("uid") uid: Long,
         @Param("msgIds") msgIds: Collection<String>,
     ): Int
+
+    @Modifying(clearAutomatically = true)
+    @Query("delete from OfflineMessage o where o.uid = :uid and o.groupId = :groupId")
+    fun deleteByUidAndGroupId(
+        @Param("uid") uid: Long,
+        @Param("groupId") groupId: Long,
+    )
+
+    @Modifying(clearAutomatically = true)
+    @Query("delete from OfflineMessage o where o.groupId = :groupId")
+    fun deleteByGroupId(@Param("groupId") groupId: Long)
 }

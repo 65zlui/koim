@@ -1,12 +1,66 @@
 # koim — Minimal Instant Messaging System
 
 A minimal IM system built with **Kotlin / Spring Boot 3** backend and **Vue 3 / Vite** frontend.
-Supports user registration/login, profile management, single chat, group chat (with owner
-administration — kick, leave, update), real-time WebSocket push, offline message sync,
-unread badges, user search, password management, Redis-based multi-instance fanout, and a
-full observability stack (Prometheus + Grafana + Alertmanager).
+Supports user registration/login, single chat, group chat, real-time WebSocket push,
+offline message sync, unread badges, Redis-based multi-instance fanout, and a full
+observability stack (Prometheus + Grafana + Alertmanager).
 
-> 中文版本：[README_zh.md](README_zh.md) · 带截图的图文介绍：[INTRODUCTION.md](INTRODUCTION.md)
+> 中文版本：[INTRODUCTION_zh.md](INTRODUCTION_zh.md)
+
+---
+
+## What Does It Look Like?
+
+### Login
+
+![Login Page](docs/screenshots/login.png)
+
+Clean and minimal login form — enter username and password, or click "Create account" to register.
+
+### Register
+
+![Register Page](docs/screenshots/register.png)
+
+Registration form with username, nickname, and password. After registering, you're automatically logged in.
+
+### Chat Interface
+
+After logging in, you land on the chat page. The sidebar shows your groups and conversations,
+and the main pane shows the active chat.
+
+![Empty Chat](docs/screenshots/chat-empty.png)
+
+New users see an empty conversation list. You can:
+- **Create a group** — enter a name and click "Create"
+- **Join a group** — enter a group ID and click "Join"
+- **Start a single chat** — enter a peer UID and click "Open"
+
+### Single Chat
+
+![Single Chat](docs/screenshots/chat-conversation.png)
+
+Send messages in real time via WebSocket. The green dot in the sidebar header indicates
+a live WS connection. Emoji input is supported via the emoji picker button.
+
+### Group Chat
+
+![Group Chat](docs/screenshots/chat-group.png)
+
+Create groups, invite members, and chat together. Messages are dispatched to all group
+members via WebSocket push or offline queue.
+
+### Observability
+
+The backend exposes Prometheus-format metrics at `/actuator/prometheus`:
+
+![Prometheus Metrics](docs/screenshots/actuator-prometheus.png)
+
+Health checks are available at `/actuator/health`:
+
+![Health Check](docs/screenshots/actuator-health.png)
+
+With the monitoring stack (`ops/docker-compose.monitoring.yml`), you get a full
+Grafana dashboard auto-provisioned with IM-specific metrics.
 
 ---
 
@@ -142,9 +196,10 @@ koim/
 │       ├── router/index.js
 │       ├── views/             # Login.vue · Register.vue · Chat.vue
 │       ├── components/        # ConversationList · ChatBox · MessageBubble · GroupPanel
-│       │                      # GroupSettings · UserProfile
 │       ├── App.vue · main.js · style.css
 │       └── assets/
+├── docs/                       # Documentation assets
+│   └── screenshots/           # Actual running screenshots
 └── ops/                       # Observability stack
     ├── docker-compose.monitoring.yml
     ├── prometheus.yml
@@ -159,7 +214,7 @@ koim/
 
 | Table | Purpose |
 |-------|---------|
-| `users` | uid (PK), username (unique), password (bcrypt), nickname, avatar_url, status |
+| `users` | uid (PK), username (unique), password (bcrypt), nickname |
 | `chat_groups` | group_id (PK), name, owner_uid (renamed from `groups` to avoid SQL keyword) |
 | `group_members` | composite PK (group_id, uid), join_time |
 | `messages` | seq (IDENTITY PK), msg_id (unique idempotency key), from_uid, to_uid, group_id, type, content, send_time |
@@ -183,16 +238,8 @@ All responses use the wrapper `{ ok: bool, data, error }`. All endpoints except
 
 | Method | Endpoint | Body | Response |
 |--------|----------|------|----------|
-| POST | `/api/user/register` | `{ username, password, nickname }` | `{ uid }` |
-| POST | `/api/user/login` | `{ username, password }` | `{ uid, token, wsUrl }` |
-| GET | `/api/user/profile` | — | `{ uid, username, nickname, avatarUrl, status, createdAt }` |
-| POST | `/api/user/profile` | `{ nickname?, avatarUrl?, status? }` | updated profile |
-| POST | `/api/user/password` | `{ oldPassword, newPassword }` | — |
-| GET | `/api/user/search?q=` | — | `[{ uid, username, nickname, avatarUrl, status }]` |
-
-> `/user/profile` (POST) only updates the fields provided (partial update).
-> `/user/password` verifies the old password before updating.
-> `/user/search` performs case-insensitive matching on username/nickname, excludes self, limits 20 results.
+| POST | `/api/user/register` | `{ username, password, nickname }` | `{ uid, token }` |
+| POST | `/api/user/login` | `{ username, password }` | `{ uid, token }` |
 
 ### Message
 
@@ -220,14 +267,6 @@ All responses use the wrapper `{ ok: bool, data, error }`. All endpoints except
 | POST | `/api/group/create` | `{ name, memberUids: [] }` | `{ groupId }` |
 | POST | `/api/group/join` | `{ groupId }` | `{ name, memberCount }` |
 | GET | `/api/group/{id}` | — | group info |
-| GET | `/api/group/{id}/members` | — | `[{ uid, username, nickname, role }]` |
-| POST | `/api/group/{id}/update` | `{ name? }` | updated group (owner only) |
-| POST | `/api/group/{id}/kick` | `{ uid }` | — (owner only) |
-| POST | `/api/group/{id}/leave` | — | — |
-
-> `/group/{id}/update` and `/group/{id}/kick` require the caller to be the group owner (403 otherwise).
-> `/group/{id}/leave` cleans up conversations and offline messages for the leaving member.
-> If the last member leaves, the group is dissolved.
 
 ### WebSocket
 
@@ -286,6 +325,8 @@ When `redis` mode is active:
 All IM-specific metrics are defined in [ImMetrics](src/main/kotlin/metrics/ImMetrics.kt)
 and exposed at `/actuator/prometheus`:
 
+![Prometheus Metrics](docs/screenshots/actuator-prometheus.png)
+
 | Metric | Type | Description |
 |--------|------|-------------|
 | `koim_ws_sessions_active` | Gauge | WebSocket sessions currently held by this process |
@@ -296,6 +337,10 @@ and exposed at `/actuator/prometheus`:
 | `koim_message_delivery` | Timer (p50, p95, p99) | MessageService.send end-to-end latency |
 | `koim_redis_fanout_published_total` | Counter | Cross-node messages published to Redis pub/sub |
 | `koim_redis_fanout_received_total` | Counter | Cross-node messages received from Redis pub/sub |
+
+### Health Check
+
+![Health Check](docs/screenshots/actuator-health.png)
 
 ### Monitoring Stack
 
@@ -341,17 +386,6 @@ See [ops/README.md](ops/README.md) for details.
 `window.location.hostname`. The same build works for `localhost` and any
 LAN IP without environment variables.
 
-### Frontend Components
-
-| Component | Responsibility |
-|-----------|---------------|
-| `ConversationList.vue` | Sidebar conversation list with unread badges |
-| `ChatBox.vue` | Message display + input with emoji picker |
-| `MessageBubble.vue` | Individual message rendering |
-| `GroupPanel.vue` | Group creation / join UI |
-| `GroupSettings.vue` | Group owner admin: rename, kick members, member list |
-| `UserProfile.vue` | Self-service: profile editing, password change, user search |
-
 ### Emoji Input
 
 `ChatBox.vue` integrates `emoji-picker-element` as a Web Component:
@@ -389,7 +423,7 @@ redis-server    # defaults to localhost:6379
 
 ```bash
 ./gradlew bootRun        # Starts on :8080, Hibernate auto-creates tables
-./gradlew test           # Runs ImEndToEndTest (16 test cases)
+./gradlew test           # Runs ImEndToEndTest (5 test cases)
 ```
 
 ### 4. Frontend
@@ -459,24 +493,13 @@ CORS is open to all origins for development convenience (see [SecurityConfig](sr
 
 ## Acceptance Tests
 
-`src/test/kotlin/ImEndToEndTest.kt` covers 16 scenarios (all passing):
+`src/test/kotlin/ImEndToEndTest.kt` covers 5 scenarios (all passing):
 
 1. **Single chat** — offline insertion, sync after connect, confirm drains queue.
 2. **Idempotent send** — same `msgId` returns the original record.
 3. **Conversation** — list / unread count / mark-as-read.
 4. **Group chat** — message dispatched to every member except sender.
 5. **Auth** — 401 on unauthenticated requests.
-6. **Group members** — list members after create/join.
-7. **Group update** — owner renames the group; non-owner gets 403.
-8. **Group kick** — owner kicks a member; conversations and offline messages cleaned up.
-9. **Group leave** — member leaves; conversations and offline messages cleaned up.
-10. **Group leave (sole member)** — last member leaves, group is dissolved.
-11. **Group kick (non-owner)** — non-owner gets 403.
-12. **User profile** — get profile returns correct fields.
-13. **User profile update** — partial update of nickname/status persists.
-14. **Change password** — old password verified, new password works.
-15. **Change password (wrong old)** — incorrect old password returns error.
-16. **User search** — keyword search returns matches, excludes self.
 
 Run with `./gradlew test`.
 

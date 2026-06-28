@@ -1,11 +1,63 @@
 # koim — 极简即时通讯系统
 
 基于 **Kotlin / Spring Boot 3** 后端和 **Vue 3 / Vite** 前端的极简 IM 系统。
-支持注册/登录、个人资料管理、单聊、群聊（群主管理——踢人、退群、修改群信息）、
-WebSocket 实时推送、离线消息同步、未读消息提醒、用户搜索、密码管理、
+支持注册/登录、单聊、群聊、WebSocket 实时推送、离线消息同步、未读消息提醒、
 Redis 多实例消息扇出，以及完整的可观测性体系（Prometheus + Grafana + Alertmanager）。
 
-> English version: [README.md](README.md) · 带截图的图文介绍：[INTRODUCTION_zh.md](INTRODUCTION_zh.md)
+> English version: [INTRODUCTION.md](INTRODUCTION.md)
+
+---
+
+## 界面预览
+
+### 登录
+
+![登录页面](docs/screenshots/login.png)
+
+简洁的登录表单 — 输入用户名和密码登录，或点击 "Create account" 注册新账号。
+
+### 注册
+
+![注册页面](docs/screenshots/register.png)
+
+注册表单包含用户名、昵称和密码。注册成功后自动登录。
+
+### 聊天界面
+
+登录后进入聊天页面。左侧栏显示群组与会话列表，右侧为主聊天区域。
+
+![空白聊天](docs/screenshots/chat-empty.png)
+
+新用户会看到空白的会话列表。你可以：
+- **创建群组** — 输入群名称，点击 "Create"
+- **加入群组** — 输入群 ID，点击 "Join"
+- **发起单聊** — 输入对方 UID，点击 "Open"
+
+### 单聊
+
+![单聊](docs/screenshots/chat-conversation.png)
+
+通过 WebSocket 实时发送消息。侧边栏的绿色圆点表示 WebSocket 连接在线。
+支持通过表情按钮输入 emoji。
+
+### 群聊
+
+![群聊](docs/screenshots/chat-group.png)
+
+创建群组、邀请成员，一起聊天。消息通过 WebSocket 推送或离线队列投递给所有群成员。
+
+### 可观测性
+
+后端在 `/actuator/prometheus` 暴露 Prometheus 格式的指标：
+
+![Prometheus 指标](docs/screenshots/actuator-prometheus.png)
+
+健康检查端点 `/actuator/health`：
+
+![健康检查](docs/screenshots/actuator-health.png)
+
+通过监控栈（`ops/docker-compose.monitoring.yml`），可获得预配置了 IM 专属指标的
+Grafana 仪表盘。
 
 ---
 
@@ -141,9 +193,10 @@ koim/
 │       ├── router/index.js
 │       ├── views/             # Login.vue · Register.vue · Chat.vue
 │       ├── components/        # ConversationList · ChatBox · MessageBubble · GroupPanel
-│       │                      # GroupSettings · UserProfile
 │       ├── App.vue · main.js · style.css
 │       └── assets/
+├── docs/                       # 文档资源
+│   └── screenshots/           # 实际运行截图
 └── ops/                       # 可观测性栈
     ├── docker-compose.monitoring.yml
     ├── prometheus.yml
@@ -158,7 +211,7 @@ koim/
 
 | 表名 | 用途 |
 |------|------|
-| `users` | uid（主键）、username（唯一）、password（bcrypt）、nickname、avatar_url、status |
+| `users` | uid（主键）、username（唯一）、password（bcrypt）、nickname |
 | `chat_groups` | group_id（主键）、name、owner_uid（避开 SQL 关键字 `groups`） |
 | `group_members` | 联合主键 (group_id, uid)、join_time |
 | `messages` | seq（IDENTITY 主键）、msg_id（唯一幂等键）、from_uid、to_uid、group_id、type、content、send_time |
@@ -182,16 +235,8 @@ koim/
 
 | 方法 | 端点 | 请求体 | 响应 |
 |------|------|--------|------|
-| POST | `/api/user/register` | `{ username, password, nickname }` | `{ uid }` |
-| POST | `/api/user/login` | `{ username, password }` | `{ uid, token, wsUrl }` |
-| GET | `/api/user/profile` | — | `{ uid, username, nickname, avatarUrl, status, createdAt }` |
-| POST | `/api/user/profile` | `{ nickname?, avatarUrl?, status? }` | 更新后的资料 |
-| POST | `/api/user/password` | `{ oldPassword, newPassword }` | — |
-| GET | `/api/user/search?q=` | — | `[{ uid, username, nickname, avatarUrl, status }]` |
-
-> `/user/profile`（POST）仅更新提供的字段（部分更新）。
-> `/user/password` 更新前会验证旧密码。
-> `/user/search` 对用户名/昵称进行不区分大小写的模糊匹配，排除自己，最多返回 20 条。
+| POST | `/api/user/register` | `{ username, password, nickname }` | `{ uid, token }` |
+| POST | `/api/user/login` | `{ username, password }` | `{ uid, token }` |
 
 ### 消息
 
@@ -219,14 +264,6 @@ koim/
 | POST | `/api/group/create` | `{ name, memberUids: [] }` | `{ groupId }` |
 | POST | `/api/group/join` | `{ groupId }` | `{ name, memberCount }` |
 | GET | `/api/group/{id}` | — | 群信息 |
-| GET | `/api/group/{id}/members` | — | `[{ uid, username, nickname, role }]` |
-| POST | `/api/group/{id}/update` | `{ name? }` | 更新后的群信息（仅群主） |
-| POST | `/api/group/{id}/kick` | `{ uid }` | —（仅群主） |
-| POST | `/api/group/{id}/leave` | — | — |
-
-> `/group/{id}/update` 和 `/group/{id}/kick` 要求调用者为群主（否则返回 403）。
-> `/group/{id}/leave` 会清理退群成员的会话和离线消息。
-> 若最后一个成员退群，群将被解散。
 
 ### WebSocket
 
@@ -285,6 +322,8 @@ koim/
 所有 IM 领域指标定义在 [ImMetrics](src/main/kotlin/metrics/ImMetrics.kt)，
 通过 `/actuator/prometheus` 暴露：
 
+![Prometheus 指标](docs/screenshots/actuator-prometheus.png)
+
 | 指标 | 类型 | 描述 |
 |------|------|------|
 | `koim_ws_sessions_active` | Gauge | 当前进程持有的 WebSocket 会话数 |
@@ -295,6 +334,10 @@ koim/
 | `koim_message_delivery` | Timer（p50、p95、p99） | MessageService.send 端到端延迟 |
 | `koim_redis_fanout_published_total` | Counter | 发布到 Redis 发布订阅的跨节点消息数 |
 | `koim_redis_fanout_received_total` | Counter | 从 Redis 发布订阅收到的跨节点消息数 |
+
+### 健康检查
+
+![健康检查](docs/screenshots/actuator-health.png)
 
 ### 监控栈
 
@@ -339,17 +382,6 @@ Grafana 中的 **koim → IM Overview** 仪表盘会自动预配置。
 `api/client.js` 与 `stores/websocket.js` 从 `window.location.hostname` 推导
 后端地址，因此同一个产物可以同时支持 `localhost` 与任意局域网 IP，无需环境变量。
 
-### 前端组件
-
-| 组件 | 职责 |
-|------|------|
-| `ConversationList.vue` | 侧边栏会话列表 + 未读提醒 |
-| `ChatBox.vue` | 消息展示 + 输入框（含 Emoji 选择器） |
-| `MessageBubble.vue` | 单条消息渲染 |
-| `GroupPanel.vue` | 创建群 / 加群 UI |
-| `GroupSettings.vue` | 群主管理：改名、踢人、成员列表 |
-| `UserProfile.vue` | 自助服务：资料编辑、修改密码、搜索用户 |
-
 ### Emoji 输入
 
 `ChatBox.vue` 集成 `emoji-picker-element` 作为 Web Component：
@@ -387,7 +419,7 @@ redis-server    # 默认 localhost:6379
 
 ```bash
 ./gradlew bootRun        # 启动 Tomcat 监听 8080，Hibernate 自动建表
-./gradlew test           # 运行 ImEndToEndTest（16 个测试用例）
+./gradlew test           # 运行 ImEndToEndTest（5 个测试用例）
 ```
 
 ### 4. 前端
@@ -456,24 +488,13 @@ CORS 默认开放所有来源便于本地开发（见 [SecurityConfig](src/main/
 
 ## 验收测试
 
-`src/test/kotlin/ImEndToEndTest.kt` 覆盖 16 个场景（全部通过）：
+`src/test/kotlin/ImEndToEndTest.kt` 覆盖 5 个场景（全部通过）：
 
 1. **单聊** — 离线入库 / 上线同步 / 确认删除。
 2. **幂等发送** — 相同 `msgId` 重复请求返回首次记录。
 3. **会话** — 列表 / 未读数 / 标记已读。
 4. **群聊** — 消息派发到除发送者外的所有成员。
 5. **鉴权** — 未携带 token 的请求返回 401。
-6. **群成员** — 创建/加入后列出成员。
-7. **修改群信息** — 群主改名；非群主返回 403。
-8. **踢人** — 群主踢成员；清理会话和离线消息。
-9. **退群** — 成员退群；清理会话和离线消息。
-10. **退群（唯一成员）** — 最后一个成员退群，群解散。
-11. **踢人（非群主）** — 非群主返回 403。
-12. **用户资料** — 获取资料返回正确字段。
-13. **更新资料** — 部分更新昵称/状态持久化。
-14. **修改密码** — 验证旧密码，新密码生效。
-15. **修改密码（旧密码错误）** — 旧密码不正确返回错误。
-16. **用户搜索** — 关键词搜索返回匹配结果，排除自己。
 
 执行：`./gradlew test`。
 

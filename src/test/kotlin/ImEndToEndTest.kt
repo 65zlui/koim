@@ -6,7 +6,9 @@ import org.example.entity.ChatGroup
 import org.example.entity.GroupMember
 import org.example.entity.GroupMemberId
 import org.example.repository.ChatGroupRepository
+import org.example.repository.ConversationRepository
 import org.example.repository.GroupMemberRepository
+import org.example.repository.OfflineMessageRepository
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
@@ -20,6 +22,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -32,6 +35,8 @@ class ImEndToEndTest {
     @Autowired lateinit var om: ObjectMapper
     @Autowired lateinit var chatGroupRepository: ChatGroupRepository
     @Autowired lateinit var groupMemberRepository: GroupMemberRepository
+    @Autowired lateinit var conversationRepository: ConversationRepository
+    @Autowired lateinit var offlineMessageRepository: OfflineMessageRepository
 
     private fun register(username: String, password: String = "p@ssw0rd"): Long {
         val body = mapOf("username" to username, "password" to password, "nickname" to username)
@@ -229,5 +234,253 @@ class ImEndToEndTest {
 
         mockMvc.perform(get("/api/conversation/list"))
             .andExpect(status().isUnauthorized)
+    }
+
+    @Test
+    fun `group members endpoint returns all members with nicknames`() {
+        val owner = "ml_owner_${System.nanoTime()}"
+        val m2 = "ml_m2_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        val m2Uid = register(m2)
+        val (_, ownerToken) = login(owner)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "ml-team", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        listOf(ownerUid, m2Uid).forEach {
+            groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, it)))
+        }
+
+        val resp = authGet("/api/group/$gid/members", ownerToken)
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        val members = om.readTree(resp).path("data")
+        assertEquals(2, members.size())
+        val uids = members.map { it.path("uid").asLong() }.toSet()
+        assertTrue(uids.contains(ownerUid))
+        assertTrue(uids.contains(m2Uid))
+    }
+
+    @Test
+    fun `update group name succeeds for owner and fails for non-owner`() {
+        val owner = "upd_owner_${System.nanoTime()}"
+        val m2 = "upd_m2_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        register(m2)
+        val (_, ownerToken) = login(owner)
+        val (_, m2Token) = login(m2)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "old-name", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        listOf(ownerUid).forEach {
+            groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, it)))
+        }
+
+        // Owner updates name → success.
+        authPost("/api/group/update", ownerToken, mapOf("groupId" to gid, "name" to "new-name"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.name").value("new-name"))
+
+        // Non-owner updates name → 403.
+        authPost("/api/group/update", m2Token, mapOf("groupId" to gid, "name" to "hacked"))
+            .andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun `leave group - non-owner leaves and conversation + offline messages are cleaned`() {
+        val owner = "lv_owner_${System.nanoTime()}"
+        val m2 = "lv_m2_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        val m2Uid = register(m2)
+        val (_, ownerToken) = login(owner)
+        val (_, m2Token) = login(m2)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "lv-team", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        listOf(ownerUid, m2Uid).forEach {
+            groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, it)))
+        }
+
+        // Owner sends a message to create conversation entries + offline messages for m2.
+        authPost("/api/message/send", ownerToken,
+            mapOf("msgId" to newMsgId(), "groupId" to gid, "content" to "hi"))
+            .andExpect(status().isOk)
+
+        // m2 has a group conversation and an offline message.
+        assertTrue(conversationRepository.findById(
+            org.example.entity.ConversationId(m2Uid, "g", gid)
+        ).isPresent)
+
+        // m2 leaves the group.
+        authPost("/api/group/leave", m2Token, mapOf("groupId" to gid))
+            .andExpect(status().isOk)
+
+        // m2 is no longer a member.
+        assertFalse(groupMemberRepository.existsByIdGroupIdAndIdUid(gid, m2Uid))
+        // m2's conversation entry removed.
+        assertFalse(conversationRepository.findById(
+            org.example.entity.ConversationId(m2Uid, "g", gid)
+        ).isPresent)
+        // Group still exists (owner is still there).
+        assertTrue(chatGroupRepository.existsById(gid))
+    }
+
+    @Test
+    fun `leave group - owner as sole member dissolves group`() {
+        val owner = "dissolve_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        val (_, ownerToken) = login(owner)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "solo", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, ownerUid)))
+
+        authPost("/api/group/leave", ownerToken, mapOf("groupId" to gid))
+            .andExpect(status().isOk)
+
+        // Group is dissolved.
+        assertFalse(chatGroupRepository.existsById(gid))
+        assertFalse(groupMemberRepository.existsByIdGroupIdAndIdUid(gid, ownerUid))
+    }
+
+    @Test
+    fun `leave group - owner with other members is rejected`() {
+        val owner = "lvrej_owner_${System.nanoTime()}"
+        val m2 = "lvrej_m2_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        val m2Uid = register(m2)
+        val (_, ownerToken) = login(owner)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "lvrej", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        listOf(ownerUid, m2Uid).forEach {
+            groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, it)))
+        }
+
+        authPost("/api/group/leave", ownerToken, mapOf("groupId" to gid))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("transfer ownership before leaving"))
+    }
+
+    @Test
+    fun `kick member - owner kicks and non-owner gets 403`() {
+        val owner = "kick_owner_${System.nanoTime()}"
+        val m2 = "kick_m2_${System.nanoTime()}"
+        val m3 = "kick_m3_${System.nanoTime()}"
+        val ownerUid = register(owner)
+        val m2Uid = register(m2)
+        val m3Uid = register(m3)
+        val (_, ownerToken) = login(owner)
+        val (_, m2Token) = login(m2)
+
+        val group = chatGroupRepository.save(ChatGroup(name = "kick-team", ownerUid = ownerUid))
+        val gid = group.groupId!!
+        listOf(ownerUid, m2Uid, m3Uid).forEach {
+            groupMemberRepository.save(GroupMember(id = GroupMemberId(gid, it)))
+        }
+
+        // Non-owner tries to kick → 403.
+        authPost("/api/group/kick", m2Token, mapOf("groupId" to gid, "targetUid" to m3Uid))
+            .andExpect(status().isForbidden)
+
+        // Owner kicks m3 → success.
+        authPost("/api/group/kick", ownerToken, mapOf("groupId" to gid, "targetUid" to m3Uid))
+            .andExpect(status().isOk)
+        assertFalse(groupMemberRepository.existsByIdGroupIdAndIdUid(gid, m3Uid))
+
+        // Owner tries to kick self → rejected.
+        authPost("/api/group/kick", ownerToken, mapOf("groupId" to gid, "targetUid" to ownerUid))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("cannot kick yourself, use leave"))
+    }
+
+    @Test
+    fun `get profile returns user info`() {
+        val name = "prof_${System.nanoTime()}"
+        register(name)
+        val (_, token) = login(name)
+
+        val resp = authGet("/api/user/profile", token)
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        val data = om.readTree(resp).path("data")
+        assertEquals(name, data.path("username").asText())
+    }
+
+    @Test
+    fun `update profile changes nickname and status`() {
+        val name = "updprof_${System.nanoTime()}"
+        register(name)
+        val (_, token) = login(name)
+
+        authPost("/api/user/profile", token,
+            mapOf("nickname" to "NewNick", "status" to "Busy coding"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.data.nickname").value("NewNick"))
+            .andExpect(jsonPath("$.data.status").value("Busy coding"))
+
+        // Verify persisted via get profile.
+        val resp = authGet("/api/user/profile", token)
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        assertEquals("NewNick", om.readTree(resp).path("data").path("nickname").asText())
+    }
+
+    @Test
+    fun `change password succeeds with correct old password and login works with new password`() {
+        val name = "chpw_${System.nanoTime()}"
+        register(name, "oldpass1")
+        val (_, token) = login(name, "oldpass1")
+
+        // Change password.
+        authPost("/api/user/password", token,
+            mapOf("oldPassword" to "oldpass1", "newPassword" to "newpass1"))
+            .andExpect(status().isOk)
+
+        // Login with new password works.
+        val loginResp = mockMvc.perform(
+            post("/api/user/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(mapOf("username" to name, "password" to "newpass1")))
+        ).andExpect(status().isOk).andReturn().response.contentAsString
+        assertNotNull(om.readTree(loginResp).path("data").path("token").asText())
+
+        // Login with old password fails.
+        mockMvc.perform(
+            post("/api/user/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(om.writeValueAsString(mapOf("username" to name, "password" to "oldpass1")))
+        ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `change password fails with wrong old password`() {
+        val name = "chpwfail_${System.nanoTime()}"
+        register(name)
+        val (_, token) = login(name)
+
+        authPost("/api/user/password", token,
+            mapOf("oldPassword" to "wrongold", "newPassword" to "newpass1"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.error").value("incorrect current password"))
+    }
+
+    @Test
+    fun `search users finds by username and nickname, excludes self`() {
+        val prefix = "srch_${System.nanoTime()}"
+        val u1name = "${prefix}_alice"
+        val u2name = "${prefix}_bob"
+        val u1Uid = register(u1name)
+        register(u2name)
+        val (_, u1Token) = login(u1name)
+
+        // Search by partial username prefix.
+        val resp = authGet("/api/user/search?q=$prefix", u1Token)
+            .andExpect(status().isOk)
+            .andReturn().response.contentAsString
+        val results = om.readTree(resp).path("data")
+        // Should find bob but not alice (self excluded).
+        val uids = results.map { it.path("uid").asLong() }
+        assertFalse(uids.isEmpty(), "Search should return results")
+        assertTrue(uids.none { it == u1Uid }, "Self should be excluded")
     }
 }
